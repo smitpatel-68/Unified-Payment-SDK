@@ -1,0 +1,272 @@
+openapi: 3.0.3
+info:
+  title: Unified Payment SDK API
+  description: |
+    Single API for accepting both fiat and stablecoin payments.
+    Merchants integrate once and accept cards, UPI, SEPA, USDC, and USDT
+    through a unified endpoint with consistent webhooks and reconciliation.
+  version: 1.0.0
+
+servers:
+  - url: https://api.unified-pay.com/v1
+
+paths:
+  /payments:
+    post:
+      summary: Create a payment
+      description: |
+        Creates a payment intent for either fiat or crypto rail.
+        For fiat: processes immediately (card) or returns payment instructions (UPI/SEPA).
+        For crypto: returns a payment intent with merchant address and gas estimate.
+        Customer signs the transaction in their wallet, then calls /confirm.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, currency, payment_method]
+              properties:
+                amount:
+                  type: number
+                  example: 500.00
+                currency:
+                  type: string
+                  enum: [USD, EUR, GBP, INR, BRL]
+                  example: USD
+                payment_method:
+                  type: string
+                  enum: [card, upi, sepa, pix, usdc, usdt]
+                  example: usdc
+                chain:
+                  type: string
+                  enum: [polygon, solana, base, ethereum, tron]
+                  description: Required for crypto payments
+                  example: polygon
+                wallet_address:
+                  type: string
+                  description: Customer wallet address (crypto only)
+                  example: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+                merchant_id:
+                  type: string
+                  example: merch_acme_001
+                order_reference:
+                  type: string
+                  example: ORD-2026-4891
+                idempotency_key:
+                  type: string
+                  description: Prevents duplicate payments
+                  example: "idem_a1b2c3d4"
+                metadata:
+                  type: object
+                  description: Arbitrary key-value pairs attached to payment
+      responses:
+        '200':
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /payments/{id}:
+    get:
+      summary: Get payment status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payment details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+
+  /payments/{id}/confirm:
+    post:
+      summary: Confirm a crypto payment
+      description: |
+        Called after the customer signs the transaction in their wallet.
+        Provides the tx_hash for the platform to monitor on-chain.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tx_hash]
+              properties:
+                tx_hash:
+                  type: string
+                  example: "0xabc123def456..."
+      responses:
+        '200':
+          description: Confirmation accepted, monitoring on-chain
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+
+  /gas/estimate:
+    get:
+      summary: Get gas estimates across chains
+      parameters:
+        - name: amount
+          in: query
+          required: true
+          schema:
+            type: number
+          example: 500
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [USDC, USDT]
+          example: USDC
+      responses:
+        '200':
+          description: Gas estimates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  estimates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        chain:
+                          type: string
+                        gas_usd:
+                          type: number
+                        gas_pct:
+                          type: number
+                        finality_seconds:
+                          type: number
+                        recommended:
+                          type: boolean
+                        reason:
+                          type: string
+
+  /rates:
+    get:
+      summary: Get live FX and stablecoin rates
+      responses:
+        '200':
+          description: Current rates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  USDC_USD:
+                    type: number
+                    example: 1.0001
+                  USDT_USD:
+                    type: number
+                    example: 0.9998
+                  USD_INR:
+                    type: number
+                    example: 83.45
+                  updated_at:
+                    type: string
+                    format: date-time
+
+components:
+  schemas:
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+          example: pay_a1b2c3d4e5f6
+        status:
+          type: string
+          enum: [pending, confirming, completed, failed, refunded]
+        rail:
+          type: string
+          enum: [FIAT, BLOCKCHAIN]
+        method:
+          type: string
+          example: "USDC on Polygon PoS"
+        amount:
+          type: object
+          properties:
+            value:
+              type: number
+            currency:
+              type: string
+        fee:
+          type: object
+          properties:
+            value:
+              type: number
+            currency:
+              type: string
+        net_amount:
+          type: object
+          properties:
+            value:
+              type: number
+            currency:
+              type: string
+        settlement:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [fiat, crypto]
+            estimated_time:
+              type: string
+        blockchain:
+          type: object
+          nullable: true
+          description: "Present only for crypto payments"
+          properties:
+            chain:
+              type: string
+            tx_hash:
+              type: string
+              nullable: true
+            block_number:
+              type: integer
+              nullable: true
+            confirmations:
+              type: integer
+            wallet_address:
+              type: string
+            token_amount:
+              type: number
+            fx_rate:
+              type: number
+        created_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          enum: [invalid_method, insufficient_balance, chain_unsupported, rate_expired, compliance_blocked, gas_spike]
+        message:
+          type: string
